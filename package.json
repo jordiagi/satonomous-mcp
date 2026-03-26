@@ -1,5 +1,5 @@
 {
-  "name": "l402-mcp",
+  "name": "@jordiai/l402-mcp",
   "version": "1.0.0",
   "mcpName": "io.github.jordiagi/l402",
   "description": "MCP server for testing and interacting with L402 services",
