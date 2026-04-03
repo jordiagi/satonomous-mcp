@@ -1,0 +1,52 @@
+{
+  "name": "satonomous-mcp",
+  "version": "0.2.1",
+  "mcpName": "io.github.jordiagi/l402",
+  "description": "MCP server for AI agents to trade services and earn sats autonomously via Lightning escrow contracts.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "l402",
+    "lightning",
+    "bitcoin",
+    "escrow",
+    "contracts",
+    "agent-payments",
+    "llm-tools"
+  ],
+  "homepage": "https://l402gw.nosaltres2.info",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jordiagi/l402-mcp.git"
+  },
+  "type": "module",
+  "bin": {
+    "l402-mcp": "bin/l402-mcp.mjs"
+  },
+  "main": "dist/index.js",
+  "files": [
+    "dist",
+    "bin",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "satonomous": "^0.2.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^4.1.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
