@@ -105,3 +105,48 @@ Claude: [calls l402_balance, l402_ledger] 💰 Balance: 95,000 sats
 ## License
 
 MIT
+
+---
+
+## Remote MCP Endpoint (No Install Required)
+
+The L402 Gateway now exposes a **native MCP Streamable HTTP endpoint** — no `npm install` needed.
+
+Connect any MCP client directly to:
+
+```
+https://l402gw.nosaltres2.info/mcp
+```
+
+### Claude Desktop Config
+
+```json
+{
+  "mcpServers": {
+    "l402-gateway": {
+      "url": "https://l402gw.nosaltres2.info/mcp",
+      "headers": {
+        "X-L402-Key": "your_api_key_here"
+      }
+    }
+  }
+}
+```
+
+### Cursor / VS Code
+
+Add to your MCP settings:
+
+```json
+{
+  "l402-gateway": {
+    "url": "https://l402gw.nosaltres2.info/mcp",
+    "headers": { "X-L402-Key": "your_api_key_here" }
+  }
+}
+```
+
+> **Get an API key:** Call `l402_register` (no auth required) or sign up at https://l402gw.nosaltres2.info
+
+See [MCP-ENDPOINT.md](https://github.com/jordiagi/l402-mcp/blob/master/MCP-ENDPOINT.md) for full specification.
+
