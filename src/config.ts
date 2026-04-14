@@ -1,38 +1,18 @@
 export interface L402McpConfig {
-  lnbitsUrl?: string;
-  lnbitsAdminKey?: string;
-  gatewayUrl: string;
-  gatewayKey?: string;
+  apiKey: string;
+  apiUrl: string;
 }
 
 export interface L402McpOptions {
-  lnbitsUrl?: string;
-  lnbitsAdminKey?: string;
-  gatewayUrl?: string;
-  gatewayKey?: string;
+  apiKey?: string;
+  apiUrl?: string;
 }
 
-const DEFAULT_GATEWAY_URL = 'https://l402.nosaltres2.info';
+const DEFAULT_API_URL = 'https://l402gw.nosaltres2.info';
 
-function normalizeUrl(url: string | undefined): string | undefined {
-  if (!url) return undefined;
-  return url.replace(/\/+$/, '');
-}
-
-export function resolveConfig(options: L402McpOptions = {}): L402McpConfig {
+export function resolveConfig(options?: Partial<L402McpConfig>): L402McpConfig {
   return {
-    lnbitsUrl:
-      normalizeUrl(options.lnbitsUrl) ??
-      normalizeUrl(process.env['LNBITS_URL']),
-    lnbitsAdminKey:
-      options.lnbitsAdminKey ??
-      process.env['LNBITS_ADMIN_KEY'],
-    gatewayUrl:
-      normalizeUrl(options.gatewayUrl) ??
-      normalizeUrl(process.env['L402_GATEWAY_URL']) ??
-      DEFAULT_GATEWAY_URL,
-    gatewayKey:
-      options.gatewayKey ??
-      process.env['L402_GATEWAY_KEY'],
+    apiKey: options?.apiKey ?? process.env['L402_API_KEY'] ?? '',
+    apiUrl: options?.apiUrl ?? process.env['L402_API_URL'] ?? DEFAULT_API_URL,
   };
 }

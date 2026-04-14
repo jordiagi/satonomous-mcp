@@ -1,0 +1,23 @@
+{
+  "name": "l402-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for AI agents to trade services on the L402 Gateway",
+  "tools": [
+    "l402_register",
+    "l402_balance",
+    "l402_deposit",
+    "l402_check_deposit",
+    "l402_withdraw",
+    "l402_create_offer",
+    "l402_list_offers",
+    "l402_get_offer",
+    "l402_accept_offer",
+    "l402_fund_contract",
+    "l402_list_contracts",
+    "l402_get_contract",
+    "l402_deliver",
+    "l402_confirm",
+    "l402_dispute",
+    "l402_ledger"
+  ]
+}
