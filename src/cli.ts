@@ -26,10 +26,10 @@ export function shouldShowHelp(): boolean {
 
 function showHelp(): void {
   console.error(`
-l402-mcp - MCP server for L402 Gateway
+satonomous-mcp - MCP server for L402 Gateway
 
 Usage:
-  l402-mcp [OPTIONS]
+  satonomous-mcp [OPTIONS]
 
 Options:
   --api-key <key>     L402 API key (or set L402_API_KEY env var)
@@ -37,12 +37,16 @@ Options:
   --help, -h          Show this help message
 
 Environment Variables:
-  L402_API_KEY        Your L402 API key (required)
+  L402_API_KEY        Your L402 API key (optional for l402_register; required for other tools)
   L402_API_URL        L402 Gateway URL (optional)
 
 Example:
-  L402_API_KEY=sk_... l402-mcp
-  l402-mcp --api-key=sk_... --api-url=https://custom.com
+  satonomous-mcp
+  L402_API_KEY=sk_... satonomous-mcp
+  satonomous-mcp --api-key=sk_... --api-url=https://custom.com
+
+Legacy alias:
+  l402-mcp
 `);
 }
 

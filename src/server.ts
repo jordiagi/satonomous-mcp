@@ -9,20 +9,22 @@ function formatNumber(n: number): string {
 }
 
 export async function createServer(config: L402McpConfig): Promise<McpServer> {
-  if (!config.apiKey) {
-    throw new Error(
-      'L402_API_KEY not configured. Please set the L402_API_KEY environment variable.'
-    );
+  function getAgent(): L402Agent {
+    if (!config.apiKey) {
+      throw new Error(
+        'L402_API_KEY not configured. First call l402_register, then add the returned API key to your MCP client config and restart this server.'
+      );
+    }
+
+    return new L402Agent({
+      apiKey: config.apiKey,
+      apiUrl: config.apiUrl,
+    });
   }
 
-  const agent = new L402Agent({
-    apiKey: config.apiKey,
-    apiUrl: config.apiUrl,
-  });
-
   const server = new McpServer({
-    name: 'l402-mcp',
-    version: '0.1.0',
+    name: 'satonomous-mcp',
+    version: '0.2.3',
   });
 
   // ── l402_register ───────────────────────────────────────────────────────────
@@ -54,6 +56,8 @@ export async function createServer(config: L402McpConfig): Promise<McpServer> {
           `  Name: ${reg.name}`,
           `  API Key: ${reg.api_key}`,
           `  Balance: ${formatNumber(reg.balance_sats)} sats`,
+          '',
+          'Next: add this API key as L402_API_KEY in your MCP client config and restart the MCP server.',
         ].join('\n');
         return { content: [{ type: 'text', text }] };
       } catch (err) {
@@ -66,7 +70,7 @@ export async function createServer(config: L402McpConfig): Promise<McpServer> {
   // ── l402_balance ────────────────────────────────────────────────────────────
   server.tool('l402_balance', 'Check your current balance on the L402 Gateway.', async () => {
     try {
-      const info = await agent.getBalance();
+      const info = await getAgent().getBalance();
       const text = `💰 Balance: ${formatNumber(info.balance_sats)} sats`;
       return { content: [{ type: 'text', text }] };
     } catch (err) {
@@ -88,7 +92,7 @@ export async function createServer(config: L402McpConfig): Promise<McpServer> {
     },
     async ({ amount_sats, reason }) => {
       try {
-        const invoice = await agent.createDeposit(amount_sats);
+        const invoice = await getAgent().createDeposit(amount_sats);
         const text = [
           '⚡ PAYMENT NEEDED — Forward this to a human!',
           '',
@@ -123,7 +127,7 @@ export async function createServer(config: L402McpConfig): Promise<McpServer> {
     },
     async ({ paymentHash }) => {
       try {
-        const status = await agent.checkDeposit(paymentHash);
+        const status = await getAgent().checkDeposit(paymentHash);
         const text = [
           `📋 Deposit Status: ${status.status}`,
           `  Amount: ${formatNumber(status.amount_sats)} sats`,
@@ -146,7 +150,7 @@ export async function createServer(config: L402McpConfig): Promise<McpServer> {
     },
     async ({ amount_sats }) => {
       try {
-        const result = await agent.withdraw(amount_sats);
+        const result = await getAgent().withdraw(amount_sats);
         const text = [
           '💸 Withdrawal Created',
           `  Amount: ${formatNumber(result.amount_sats)} sats`,
@@ -188,7 +192,7 @@ export async function createServer(config: L402McpConfig): Promise<McpServer> {
     },
     async ({ title, description, price_sats, service_type, sla_minutes, dispute_window_minutes }) => {
       try {
-        const offer = await agent.createOffer({
+        const offer = await getAgent().createOffer({
           title,
           description,
           price_sats,
@@ -215,7 +219,7 @@ export async function createServer(config: L402McpConfig): Promise<McpServer> {
   // ── l402_list_offers ────────────────────────────────────────────────────────
   server.tool('l402_list_offers', 'List all offers you have created.', async () => {
     try {
-      const offers = await agent.listOffers();
+      const offers = await getAgent().listOffers();
       if (offers.length === 0) {
         return { content: [{ type: 'text', text: 'No offers created yet.' }] };
       }
@@ -241,7 +245,7 @@ export async function createServer(config: L402McpConfig): Promise<McpServer> {
     },
     async ({ offerId }) => {
       try {
-        const offer = await agent.getOffer(offerId);
+        const offer = await getAgent().getOffer(offerId);
         const text = [
           '📋 Offer Details',
           `  ID: ${offer.id}`,
@@ -272,7 +276,7 @@ export async function createServer(config: L402McpConfig): Promise<McpServer> {
     },
     async ({ offerId }) => {
       try {
-        const contract = await agent.acceptOffer(offerId);
+        const contract = await getAgent().acceptOffer(offerId);
         const text = [
           '✅ Contract Created',
           `  Contract ID: ${contract.id}`,
@@ -299,7 +303,7 @@ export async function createServer(config: L402McpConfig): Promise<McpServer> {
     },
     async ({ contractId }) => {
       try {
-        const result = await agent.fundContract(contractId);
+        const result = await getAgent().fundContract(contractId);
         const text = [
           '💰 Contract Funded',
           `  Contract ID: ${result.contract.id}`,
@@ -328,7 +332,7 @@ export async function createServer(config: L402McpConfig): Promise<McpServer> {
     },
     async ({ role, status }) => {
       try {
-        const contracts = await agent.listContracts({ role, status });
+        const contracts = await getAgent().listContracts({ role, status });
         if (contracts.length === 0) {
           return { content: [{ type: 'text', text: 'No contracts found.' }] };
         }
@@ -356,7 +360,7 @@ export async function createServer(config: L402McpConfig): Promise<McpServer> {
     },
     async ({ contractId }) => {
       try {
-        const contract = await agent.getContract(contractId);
+        const contract = await getAgent().getContract(contractId);
         const text = [
           '📋 Contract Details',
           `  ID: ${contract.id}`,
@@ -393,7 +397,7 @@ export async function createServer(config: L402McpConfig): Promise<McpServer> {
     },
     async ({ contractId, proofUrl, proofData }) => {
       try {
-        const contract = await agent.submitDelivery(contractId, proofUrl, proofData);
+        const contract = await getAgent().submitDelivery(contractId, proofUrl, proofData);
         const text = [
           '✅ Delivery Submitted',
           `  Contract ID: ${contract.id}`,
@@ -417,7 +421,7 @@ export async function createServer(config: L402McpConfig): Promise<McpServer> {
     },
     async ({ contractId }) => {
       try {
-        const contract = await agent.confirmDelivery(contractId);
+        const contract = await getAgent().confirmDelivery(contractId);
         const text = [
           '✅ Delivery Confirmed',
           `  Contract ID: ${contract.id}`,
@@ -443,7 +447,7 @@ export async function createServer(config: L402McpConfig): Promise<McpServer> {
     },
     async ({ contractId, reason, evidenceUrl }) => {
       try {
-        const contract = await agent.disputeDelivery(contractId, reason, evidenceUrl);
+        const contract = await getAgent().disputeDelivery(contractId, reason, evidenceUrl);
         const text = [
           '⚠️ Dispute Opened',
           `  Contract ID: ${contract.id}`,
@@ -468,7 +472,7 @@ export async function createServer(config: L402McpConfig): Promise<McpServer> {
     },
     async ({ limit, offset }) => {
       try {
-        const { balance_sats, entries } = await agent.getLedger(limit, offset);
+        const { balance_sats, entries } = await getAgent().getLedger(limit, offset);
         if (entries.length === 0) {
           return {
             content: [
@@ -501,5 +505,5 @@ export async function runServer(config: L402McpConfig): Promise<void> {
   const server = await createServer(config);
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('[l402-mcp] Server running on stdio');
+  console.error('[satonomous-mcp] Server running on stdio');
 }
