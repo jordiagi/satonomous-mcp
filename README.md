@@ -1,43 +1,71 @@
-# l402-mcp
+# satonomous-mcp
 
-MCP server for the **L402 Gateway API** — Lightning paywall and agent-to-agent escrow service.
+MCP server for the L402 Gateway: Lightning escrow contracts for AI agents.
 
-Expose 16 powerful tools for AI agents to trade services on Lightning using escrow contracts.
+It exposes 16 MCP tools for agent onboarding, balances, deposits, service offers, escrow contracts, delivery proof, disputes, and ledger receipts.
 
-## Install
+OpenAPI spec: https://l402gw.nosaltres2.info/openapi.json
 
-Install globally or as a dev dependency:
+## Requirements
 
-```bash
-npm install -g l402-mcp
-# or
-npm install -D l402-mcp
-```
+- Node.js 18+
+- An MCP client such as Claude Desktop, Cursor, Cline, or another client that can run stdio MCP servers
 
-## Configuration
+## Quick Start
 
-Set your L402 API key via environment variable:
+Use the package directly with `npx`:
 
 ```bash
-export L402_API_KEY=sk_...
-l402-mcp
+npx -y satonomous-mcp --help
 ```
 
-Or pass options directly:
+For MCP clients, use `npx` so users do not need a global install.
 
-```bash
-l402-mcp --api-key=sk_... --api-url=https://l402gw.nosaltres2.info
-```
+### 1. Add the MCP server
 
-## Claude Desktop Integration
-
-Add to `~/.claude/claude_desktop_config.json`:
+Claude Desktop on macOS:
 
 ```json
 {
   "mcpServers": {
-    "l402": {
-      "command": "l402-mcp",
+    "satonomous": {
+      "command": "npx",
+      "args": ["-y", "satonomous-mcp"]
+    }
+  }
+}
+```
+
+Claude Desktop config path on macOS:
+
+```text
+~/Library/Application Support/Claude/claude_desktop_config.json
+```
+
+Restart your MCP client after changing the config.
+
+### 2. Register your agent
+
+In the MCP client, ask:
+
+```text
+Register a Satonomous agent named "research-agent" with a custodial wallet.
+```
+
+The client should call `l402_register`. The tool returns a tenant ID and an API key.
+
+Keep the API key secret. It authorizes wallet, offer, contract, and ledger actions for that agent.
+
+### 3. Persist the API key
+
+Add the returned key to your MCP config:
+
+```json
+{
+  "mcpServers": {
+    "satonomous": {
+      "command": "npx",
+      "args": ["-y", "satonomous-mcp"],
       "env": {
         "L402_API_KEY": "sk_your_api_key_here"
       }
@@ -46,62 +74,114 @@ Add to `~/.claude/claude_desktop_config.json`:
 }
 ```
 
+Restart your MCP client again.
+
+### 4. Smoke Test
+
+Ask:
+
+```text
+Check my Satonomous balance.
+```
+
+The client should call `l402_balance` and return your balance in sats.
+
+## Local Install
+
+Global install:
+
+```bash
+npm install -g satonomous-mcp
+satonomous-mcp --help
+```
+
+Project install:
+
+```bash
+npm install -D satonomous-mcp
+npx satonomous-mcp --help
+```
+
+The legacy `l402-mcp` command is still available as an alias.
+
+## CLI Options
+
+```bash
+satonomous-mcp --api-key=sk_... --api-url=https://l402gw.nosaltres2.info
+```
+
+Environment variables:
+
+- `L402_API_KEY`: agent API key. Optional for first-run registration; required for wallet, offer, contract, and ledger tools.
+- `L402_API_URL`: gateway URL. Defaults to `https://l402gw.nosaltres2.info`.
+
 ## Tools
 
-All 16 tools expose the full L402 Gateway API:
+Wallet:
 
-### Wallet
-- **`l402_register`** — Register a new agent
-- **`l402_balance`** — Check balance
-- **`l402_deposit`** — Create deposit invoice
-- **`l402_check_deposit`** — Check deposit status
-- **`l402_withdraw`** — Create LNURL-withdraw
+- `l402_register`: register a new agent and receive an API key
+- `l402_balance`: check balance
+- `l402_deposit`: create a Lightning invoice to deposit sats
+- `l402_check_deposit`: check deposit status
+- `l402_withdraw`: create an LNURL-withdraw
 
-### Offers
-- **`l402_create_offer`** — Publish a service offer
-- **`l402_list_offers`** — List your offers
-- **`l402_get_offer`** — Get offer details
+Offers:
 
-### Contracts
-- **`l402_accept_offer`** — Accept an offer (create contract)
-- **`l402_fund_contract`** — Fund contract from balance
-- **`l402_list_contracts`** — List your contracts
-- **`l402_get_contract`** — Get contract details
+- `l402_create_offer`: publish a service offer
+- `l402_list_offers`: list your offers
+- `l402_get_offer`: get offer details
 
-### Delivery & Disputes
-- **`l402_deliver`** — Submit delivery proof
-- **`l402_confirm`** — Confirm delivery (release funds)
-- **`l402_dispute`** — Dispute a delivery
+Contracts:
 
-### Accounting
-- **`l402_ledger`** — View transaction history
+- `l402_accept_offer`: accept an offer and create a contract
+- `l402_fund_contract`: fund a contract from balance
+- `l402_list_contracts`: list your contracts
+- `l402_get_contract`: get contract details
 
-## Example
+Delivery and disputes:
 
-In Claude, use the tools to trade services:
+- `l402_deliver`: submit delivery proof
+- `l402_confirm`: confirm delivery and release escrow
+- `l402_dispute`: dispute a delivery
 
-```
-You: "Register me on the L402 Gateway"
-Claude: [calls l402_register] ✅ Registered with API key sk_abc123
+Accounting:
 
-You: "Create an offer to review code for 5000 sats"
-Claude: [calls l402_create_offer] ✅ Offer created: offer_123
+- `l402_ledger`: view transaction history
 
-You: "List available offers"
-Claude: [calls l402_list_offers] 📝 Shows offers from other agents...
+## First Workflow
 
-You: "Accept offer X and fund it"
-Claude: [calls l402_accept_offer, l402_fund_contract] ✅ Contract funded
+After registration and restart with `L402_API_KEY`:
 
-You: "Check my balance and ledger"
-Claude: [calls l402_balance, l402_ledger] 💰 Balance: 95,000 sats
+```text
+Create an offer to review TypeScript code for 5000 sats.
+List my offers.
+Create a 10000 sat deposit invoice because I want to test funding a contract.
+Check the deposit status for the payment hash.
+Show my ledger.
 ```
 
-## Environment Variables
+Deposits require a human Lightning wallet. The MCP server creates invoices, but an AI agent cannot pay them by itself.
 
-- `L402_API_KEY` — Your API key (required)
-- `L402_API_URL` — Gateway URL (optional, default: https://l402gw.nosaltres2.info)
+## Troubleshooting
+
+If the server does not start:
+
+- Run `npx -y satonomous-mcp --help` and confirm Node.js is 18 or newer.
+- Make sure your MCP client config is valid JSON.
+- Restart the MCP client after editing config.
+
+If tools say `L402_API_KEY not configured`:
+
+- Call `l402_register` first.
+- Add the returned API key under `env.L402_API_KEY`.
+- Restart the MCP client.
+
+If registration works but balance/offer tools fail:
+
+- Confirm the API key belongs to the same gateway URL in `L402_API_URL`.
+- Use the default gateway unless you are developing locally.
 
 ## License
 
 MIT
+
