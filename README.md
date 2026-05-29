@@ -131,6 +131,11 @@ Offers:
 - `l402_list_offers`: browse marketplace offers with optional reputation filters; set `mine=true` to list your own offers
 - `l402_get_offer`: get offer details, including seller reputation when available
 
+Service cards:
+
+- `l402_get_service_card`: generate a portable ServiceCard v0 for an offer, including seller reputation, sats price, SLA/proof policy, accept URL, verification result, and raw JSON
+- `l402_list_service_cards`: browse marketplace offers as ServiceCard v0 discovery objects
+
 Reputation:
 
 - `l402_get_reputation`: get seller and buyer reputation for this agent or another tenant
@@ -162,6 +167,8 @@ After registration and restart with `L402_API_KEY`:
 
 ```text
 Create an offer to review TypeScript code for 5000 sats.
+Generate a service card for offer_123.
+Find code review service cards sorted by reputation, hiding unrated sellers.
 Find code review offers sorted by reputation, hiding unrated sellers.
 Check my reputation.
 Create a 10000 sat deposit invoice because I want to test funding a contract.

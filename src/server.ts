@@ -1,8 +1,8 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { L402Agent, verifyContractReceipt } from 'satonomous';
-import type { ContractReceipt } from 'satonomous';
+import { L402Agent, verifyContractReceipt, verifyServiceCard } from 'satonomous';
+import type { ContractReceipt, ServiceCard } from 'satonomous';
 import type { L402McpConfig } from './config.js';
 
 type ReputationLevel = 'new' | 'bronze' | 'silver' | 'gold' | 'platinum';
@@ -127,6 +127,51 @@ function formatContractReceipt(receipt: ContractReceipt): string {
   ].filter(Boolean).join('\n');
 }
 
+function formatServiceCard(card: ServiceCard): string {
+  const verification = verifyServiceCard(card);
+  const reputation = card.seller.reputation
+    ? `${card.seller.reputation.score}/100 ${card.seller.reputation.level}, ` +
+      `${formatNumber(card.seller.reputation.settled_contracts)} settled, ` +
+      `${formatPercent(card.seller.reputation.dispute_rate)} disputes`
+    : 'unavailable';
+
+  return [
+    '🪪 ServiceCard v0',
+    `  Card ID: ${card.card_id}`,
+    `  Body Hash: ${card.body_hash}`,
+    `  Offer: ${card.service.offer_id}`,
+    `  Seller: ${card.seller.agent_id}`,
+    `  Service: ${card.service.title}`,
+    `  Type: ${card.service.service_type}`,
+    `  Price: ${formatNumber(card.service.price_sats)} sats`,
+    `  SLA: ${card.terms.sla_minutes ?? 'unspecified'} min`,
+    `  Reputation: ${reputation}`,
+    `  Proof: ${card.terms.proof_requirements.join(', ') || 'unspecified'}`,
+    `  Accept: ${card.accept.accept_url}`,
+    `  Verification: ${verification.valid ? 'valid' : verification.codes.join(', ')}`,
+    verification.warnings.length ? `  Warnings: ${verification.warnings.join(', ')}` : null,
+    '',
+    'Raw JSON:',
+    JSON.stringify(card, null, 2),
+  ].filter(Boolean).join('\n');
+}
+
+function formatServiceCardList(cards: ServiceCard[]): string {
+  return [
+    `ServiceCards (${cards.length} total):`,
+    ...cards.map((card) => [
+      `  ${card.card_id}: ${card.service.title} — ${formatNumber(card.service.price_sats)} sats`,
+      `    Offer: ${card.service.offer_id}`,
+      `    Seller: ${card.seller.agent_id}`,
+      `    Type: ${card.service.service_type}`,
+      `    Accept: ${card.accept.accept_url}`,
+    ].join('\n')),
+    '',
+    'Raw JSON:',
+    JSON.stringify(cards, null, 2),
+  ].join('\n');
+}
+
 function buildQuery(params?: object): string {
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(params || {})) {
@@ -193,7 +238,7 @@ export async function createServer(config: L402McpConfig): Promise<McpServer> {
 
   const server = new McpServer({
     name: 'satonomous-mcp',
-    version: '0.2.5',
+    version: '0.2.6',
   });
 
   // ── l402_register ───────────────────────────────────────────────────────────
@@ -455,6 +500,57 @@ export async function createServer(config: L402McpConfig): Promise<McpServer> {
           .filter(Boolean)
           .join('\n');
         return { content: [{ type: 'text', text }] };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text', text: `❌ Error: ${msg}` }], isError: true };
+      }
+    }
+  );
+
+  // ── l402_get_service_card ──────────────────────────────────────────────────
+  server.tool(
+    'l402_get_service_card',
+    'Generate a portable ServiceCard v0 for an offer. Returns compact text plus raw JSON.',
+    {
+      offerId: z.string().describe('Offer ID'),
+    },
+    async ({ offerId }) => {
+      try {
+        const card = await getAgent().getServiceCard(offerId);
+        return { content: [{ type: 'text', text: formatServiceCard(card) }] };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text', text: `❌ Error: ${msg}` }], isError: true };
+      }
+    }
+  );
+
+  // ── l402_list_service_cards ────────────────────────────────────────────────
+  server.tool(
+    'l402_list_service_cards',
+    'Browse marketplace offers as portable ServiceCard v0 discovery objects.',
+    {
+      service_type: z.string().optional().describe('Filter by service type'),
+      min_reputation: z.number().min(0).max(100).optional().describe('Minimum seller reputation score'),
+      hide_unrated: z.boolean().optional().default(false).describe('Hide sellers with fewer than 3 settled contracts'),
+      sort: z.enum(['created_at', 'price', 'reputation']).optional().default('created_at').describe('Offer sort order'),
+      limit: z.number().int().positive().max(50).optional().default(10).describe('Number of service cards'),
+      offset: z.number().int().min(0).optional().default(0).describe('Pagination offset'),
+    },
+    async ({ service_type, min_reputation, hide_unrated, sort, limit, offset }) => {
+      try {
+        const cards = await getAgent().browseServiceCards({
+          service_type,
+          min_reputation,
+          hide_unrated,
+          sort,
+          limit,
+          offset,
+        });
+        if (cards.length === 0) {
+          return { content: [{ type: 'text', text: 'No marketplace service cards found.' }] };
+        }
+        return { content: [{ type: 'text', text: formatServiceCardList(cards) }] };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return { content: [{ type: 'text', text: `❌ Error: ${msg}` }], isError: true };
