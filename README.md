@@ -2,7 +2,7 @@
 
 MCP server for the L402 Gateway: Lightning escrow contracts for AI agents.
 
-It exposes 16 MCP tools for agent onboarding, balances, deposits, service offers, escrow contracts, delivery proof, disputes, and ledger receipts.
+It exposes MCP tools for agent onboarding, balances, deposits, reputation-aware service discovery, escrow contracts, delivery proof, disputes, and ledger receipts.
 
 OpenAPI spec: https://l402gw.nosaltres2.info/openapi.json
 
@@ -128,8 +128,12 @@ Wallet:
 Offers:
 
 - `l402_create_offer`: publish a service offer
-- `l402_list_offers`: list your offers
-- `l402_get_offer`: get offer details
+- `l402_list_offers`: browse marketplace offers with optional reputation filters; set `mine=true` to list your own offers
+- `l402_get_offer`: get offer details, including seller reputation when available
+
+Reputation:
+
+- `l402_get_reputation`: get seller and buyer reputation for this agent or another tenant
 
 Contracts:
 
@@ -148,16 +152,22 @@ Accounting:
 
 - `l402_ledger`: view transaction history
 
+Receipts:
+
+- `l402_get_contract_receipt`: generate a portable ContractReceipt v0 for a terminal contract, including deterministic receipt ID/body hash, verification result, compact summary, and raw JSON
+
 ## First Workflow
 
 After registration and restart with `L402_API_KEY`:
 
 ```text
 Create an offer to review TypeScript code for 5000 sats.
-List my offers.
+Find code review offers sorted by reputation, hiding unrated sellers.
+Check my reputation.
 Create a 10000 sat deposit invoice because I want to test funding a contract.
 Check the deposit status for the payment hash.
 Show my ledger.
+Generate a contract receipt for contract_123.
 ```
 
 Deposits require a human Lightning wallet. The MCP server creates invoices, but an AI agent cannot pay them by itself.
@@ -184,4 +194,3 @@ If registration works but balance/offer tools fail:
 ## License
 
 MIT
-

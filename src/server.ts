@@ -1,11 +1,141 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { L402Agent } from 'satonomous';
+import { L402Agent, verifyContractReceipt } from 'satonomous';
+import type { ContractReceipt } from 'satonomous';
 import type { L402McpConfig } from './config.js';
+
+type ReputationLevel = 'new' | 'bronze' | 'silver' | 'gold' | 'platinum';
+
+interface OfferSellerReputation {
+  score: number;
+  level: ReputationLevel;
+  completed_contracts: number;
+  settled_contracts: number;
+  dispute_rate: number;
+  total_volume_sats: number;
+  unique_counterparties: number;
+}
+
+interface McpOffer {
+  id: string;
+  seller_tenant_id: string;
+  title: string;
+  description: string | null;
+  price_sats: number;
+  service_type: string;
+  active: number;
+  created_at: string;
+  seller_reputation?: OfferSellerReputation;
+}
+
+interface ListOffersParams {
+  service_type?: string;
+  min_reputation?: number;
+  hide_unrated?: boolean;
+  sort?: 'created_at' | 'price' | 'reputation';
+  limit?: number;
+  offset?: number;
+}
+
+interface TenantReputation {
+  tenant_id: string;
+  seller: {
+    score: number;
+    level: ReputationLevel;
+    summary: {
+      settled_contracts: number;
+      released_contracts: number;
+      dispute_rate: number;
+      total_volume_sats: number;
+      unique_counterparties: number;
+      median_delivery_minutes: number | null;
+    };
+  };
+  buyer: {
+    score: number;
+    level: ReputationLevel;
+    summary: {
+      settled_contracts: number;
+      funded_contracts: number;
+      dispute_rate: number;
+      total_volume_sats: number;
+      unique_counterparties: number;
+    };
+  };
+}
 
 function formatNumber(n: number): string {
   return n.toLocaleString('en-US');
+}
+
+function formatPercent(n: number): string {
+  return `${(n * 100).toFixed(1)}%`;
+}
+
+function formatSellerReputation(rep?: OfferSellerReputation): string {
+  if (!rep) return 'seller reputation unavailable';
+  return [
+    `${rep.score}/100 ${rep.level}`,
+    `${formatNumber(rep.settled_contracts)} settled`,
+    `${formatPercent(rep.dispute_rate)} disputes`,
+    `${formatNumber(rep.total_volume_sats)} sats volume`,
+  ].join(', ');
+}
+
+function formatTenantReputation(rep: TenantReputation): string {
+  return [
+    `Reputation for ${rep.tenant_id}`,
+    '',
+    `Seller: ${rep.seller.score}/100 ${rep.seller.level}`,
+    `  Settled: ${formatNumber(rep.seller.summary.settled_contracts)}`,
+    `  Released: ${formatNumber(rep.seller.summary.released_contracts)}`,
+    `  Dispute rate: ${formatPercent(rep.seller.summary.dispute_rate)}`,
+    `  Volume: ${formatNumber(rep.seller.summary.total_volume_sats)} sats`,
+    `  Counterparties: ${formatNumber(rep.seller.summary.unique_counterparties)}`,
+    rep.seller.summary.median_delivery_minutes !== null
+      ? `  Median delivery: ${Math.round(rep.seller.summary.median_delivery_minutes)} min`
+      : null,
+    '',
+    `Buyer: ${rep.buyer.score}/100 ${rep.buyer.level}`,
+    `  Settled: ${formatNumber(rep.buyer.summary.settled_contracts)}`,
+    `  Funded: ${formatNumber(rep.buyer.summary.funded_contracts)}`,
+    `  Dispute rate: ${formatPercent(rep.buyer.summary.dispute_rate)}`,
+    `  Volume: ${formatNumber(rep.buyer.summary.total_volume_sats)} sats`,
+    `  Counterparties: ${formatNumber(rep.buyer.summary.unique_counterparties)}`,
+  ].filter(Boolean).join('\n');
+}
+
+function formatContractReceipt(receipt: ContractReceipt): string {
+  const verification = verifyContractReceipt(receipt);
+  return [
+    '🧾 ContractReceipt v0',
+    `  Receipt ID: ${receipt.receipt_id}`,
+    `  Body Hash: ${receipt.body_hash}`,
+    `  Contract: ${receipt.contract.id}`,
+    `  Outcome: ${receipt.settlement.outcome}`,
+    `  Price: ${formatNumber(receipt.contract.price_sats)} sats`,
+    `  Buyer: ${receipt.contract.buyer_agent_id}`,
+    `  Seller: ${receipt.contract.seller_agent_id}`,
+    receipt.delivery_proof.url ? `  Delivery proof: ${receipt.delivery_proof.url}` : null,
+    `  Evidence refs: ${formatNumber(receipt.evidence_refs.length)}`,
+    `  Verification: ${verification.valid ? 'valid' : verification.codes.join(', ')}`,
+    verification.warnings.length ? `  Warnings: ${verification.warnings.join(', ')}` : null,
+    '',
+    'Raw JSON:',
+    JSON.stringify(receipt, null, 2),
+  ].filter(Boolean).join('\n');
+}
+
+function buildQuery(params?: object): string {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params || {})) {
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      query.append(key, String(value));
+    }
+  }
+  const encoded = query.toString();
+  return encoded ? `?${encoded}` : '';
 }
 
 export async function createServer(config: L402McpConfig): Promise<McpServer> {
@@ -22,9 +152,48 @@ export async function createServer(config: L402McpConfig): Promise<McpServer> {
     });
   }
 
+  async function gatewayRequest<T>(path: string, auth = true): Promise<T> {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (auth) {
+      if (!config.apiKey) {
+        throw new Error(
+          'L402_API_KEY not configured. First call l402_register, then add the returned API key to your MCP client config and restart this server.'
+        );
+      }
+      headers['X-L402-Key'] = config.apiKey;
+    }
+
+    const res = await fetch(`${config.apiUrl}${path}`, { method: 'GET', headers });
+    if (!res.ok) {
+      let message = `HTTP ${res.status}`;
+      try {
+        const data = await res.json() as { error?: string };
+        message = data.error || message;
+      } catch {
+        // Keep HTTP fallback.
+      }
+      throw new Error(message);
+    }
+
+    return res.json() as Promise<T>;
+  }
+
+  async function listGatewayOffers(filters: ListOffersParams, mine: boolean): Promise<McpOffer[]> {
+    const result = await gatewayRequest<{ offers: McpOffer[] }>(
+      `/api/v1/offers${buildQuery(filters)}`,
+      mine
+    );
+    return result.offers || [];
+  }
+
+  async function getGatewayReputation(tenantId?: string): Promise<TenantReputation> {
+    const id = tenantId ?? (await gatewayRequest<{ tenant_id: string }>('/api/v1/tenants/me')).tenant_id;
+    return gatewayRequest<TenantReputation>(`/api/v1/reputation/${encodeURIComponent(id)}`);
+  }
+
   const server = new McpServer({
     name: 'satonomous-mcp',
-    version: '0.2.3',
+    version: '0.2.5',
   });
 
   // ── l402_register ───────────────────────────────────────────────────────────
@@ -217,16 +386,40 @@ export async function createServer(config: L402McpConfig): Promise<McpServer> {
   );
 
   // ── l402_list_offers ────────────────────────────────────────────────────────
-  server.tool('l402_list_offers', 'List all offers you have created.', async () => {
-    try {
-      const offers = await getAgent().listOffers();
+  server.tool(
+    'l402_list_offers',
+    'Browse marketplace offers with optional reputation filters. Set mine=true to list your own offers.',
+    {
+      service_type: z.string().optional().describe('Filter by service type'),
+      min_reputation: z.number().min(0).max(100).optional().describe('Minimum seller reputation score'),
+      hide_unrated: z.boolean().optional().default(false).describe('Hide sellers with fewer than 3 settled contracts'),
+      sort: z.enum(['created_at', 'price', 'reputation']).optional().default('created_at').describe('Offer sort order'),
+      limit: z.number().int().positive().max(100).optional().default(20).describe('Number of offers'),
+      offset: z.number().int().min(0).optional().default(0).describe('Pagination offset'),
+      mine: z.boolean().optional().default(false).describe('List offers created by this agent instead of public marketplace offers'),
+    },
+    async ({ service_type, min_reputation, hide_unrated, sort, limit, offset, mine }) => {
+      try {
+        const filters: ListOffersParams = {
+          service_type,
+          min_reputation,
+          hide_unrated,
+          sort,
+          limit,
+          offset,
+        };
+        const offers = await listGatewayOffers(filters, mine);
       if (offers.length === 0) {
-        return { content: [{ type: 'text', text: 'No offers created yet.' }] };
+        return { content: [{ type: 'text', text: mine ? 'No offers created yet.' : 'No marketplace offers found.' }] };
       }
       const text = [
-        `📝 Your Offers (${offers.length} total):`,
+        `${mine ? 'Your Offers' : 'Marketplace Offers'} (${offers.length} total):`,
         ...offers.map(
-          (o) => `  ${o.id}: ${o.title} — ${formatNumber(o.price_sats)} sats`
+          (o) => [
+            `  ${o.id}: ${o.title} — ${formatNumber(o.price_sats)} sats`,
+            `    Seller: ${o.seller_tenant_id}`,
+            `    Reputation: ${formatSellerReputation(o.seller_reputation)}`,
+          ].join('\n')
         ),
       ].join('\n');
       return { content: [{ type: 'text', text }] };
@@ -234,7 +427,8 @@ export async function createServer(config: L402McpConfig): Promise<McpServer> {
       const msg = err instanceof Error ? err.message : String(err);
       return { content: [{ type: 'text', text: `❌ Error: ${msg}` }], isError: true };
     }
-  });
+    }
+  );
 
   // ── l402_get_offer ──────────────────────────────────────────────────────────
   server.tool(
@@ -245,7 +439,7 @@ export async function createServer(config: L402McpConfig): Promise<McpServer> {
     },
     async ({ offerId }) => {
       try {
-        const offer = await getAgent().getOffer(offerId);
+        const offer = await getAgent().getOffer(offerId) as McpOffer;
         const text = [
           '📋 Offer Details',
           `  ID: ${offer.id}`,
@@ -254,6 +448,7 @@ export async function createServer(config: L402McpConfig): Promise<McpServer> {
           offer.description ? `  Description: ${offer.description}` : '',
           `  Price: ${formatNumber(offer.price_sats)} sats`,
           `  Service Type: ${offer.service_type}`,
+          `  Seller Reputation: ${formatSellerReputation(offer.seller_reputation)}`,
           `  Active: ${offer.active ? 'yes' : 'no'}`,
           `  Created: ${offer.created_at}`,
         ]
@@ -263,6 +458,24 @@ export async function createServer(config: L402McpConfig): Promise<McpServer> {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return { content: [{ type: 'text', text: `❌ Error: ${msg}` }], isError: true };
+      }
+    }
+  );
+
+  // ── l402_get_reputation ────────────────────────────────────────────────────
+  server.tool(
+    'l402_get_reputation',
+    'Get seller and buyer reputation for this agent or another tenant.',
+    {
+      tenantId: z.string().optional().describe('Tenant ID. Omit to fetch this agent reputation.'),
+    },
+    async ({ tenantId }) => {
+      try {
+        const reputation = await getGatewayReputation(tenantId);
+        return { content: [{ type: 'text', text: formatTenantReputation(reputation) }] };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text', text: `Error: ${msg}` }], isError: true };
       }
     }
   );
@@ -379,6 +592,24 @@ export async function createServer(config: L402McpConfig): Promise<McpServer> {
           .filter(Boolean)
           .join('\n');
         return { content: [{ type: 'text', text }] };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text', text: `❌ Error: ${msg}` }], isError: true };
+      }
+    }
+  );
+
+  // ── l402_get_contract_receipt ──────────────────────────────────────────────
+  server.tool(
+    'l402_get_contract_receipt',
+    'Generate a portable ContractReceipt v0 for a terminal contract. Returns compact text plus raw JSON.',
+    {
+      contractId: z.string().describe('Contract ID'),
+    },
+    async ({ contractId }) => {
+      try {
+        const receipt = await getAgent().getContractReceipt(contractId);
+        return { content: [{ type: 'text', text: formatContractReceipt(receipt) }] };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return { content: [{ type: 'text', text: `❌ Error: ${msg}` }], isError: true };
