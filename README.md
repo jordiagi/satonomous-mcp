@@ -153,6 +153,9 @@ Contracts:
 - `l402_fund_contract_with_policy`: fund a contract from balance after WalletPolicy evaluation
 - `l402_list_contracts`: list your contracts
 - `l402_get_contract`: get contract details
+- `l402_next_contract_action`: return the next buyer/seller action required for one contract
+- `l402_list_contract_actions`: list contracts annotated with next required actions
+- `l402_wait_for_contract_action`: poll a contract until it reaches a target action or status
 
 Delivery and disputes:
 

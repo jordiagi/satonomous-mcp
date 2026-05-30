@@ -10,9 +10,23 @@ import {
   verifyWalletPolicy,
 } from 'satonomous';
 import type { ContractReceipt, ServiceCard, WalletPolicy, WalletPolicyContext } from 'satonomous';
+import type { ContractNextAction, ContractNextActionCode, ContractRole } from 'satonomous';
 import type { L402McpConfig } from './config.js';
 
 type ReputationLevel = 'new' | 'bronze' | 'silver' | 'gold' | 'platinum';
+
+const contractRoleSchema = z.enum(['buyer', 'seller', 'observer']);
+const contractActionSchema = z.enum([
+  'fund_contract',
+  'wait_for_funding',
+  'submit_delivery',
+  'wait_for_delivery',
+  'confirm_or_dispute_delivery',
+  'wait_for_buyer_review',
+  'review_dispute',
+  'terminal_receipt_available',
+  'unknown_status',
+]);
 
 interface OfferSellerReputation {
   score: number;
@@ -204,6 +218,40 @@ function formatWalletPolicy(policy: WalletPolicy): string {
   ].filter(Boolean).join('\n');
 }
 
+function formatContractAction(action: ContractNextAction): string {
+  return [
+    'Contract next action',
+    `  Contract ID: ${action.contract_id}`,
+    `  Status: ${action.status}`,
+    `  Role: ${action.role}`,
+    `  Actor: ${action.actor}`,
+    `  Action: ${action.action}`,
+    `  Required for role: ${action.required ? 'yes' : 'no'}`,
+    `  Terminal: ${action.terminal ? 'yes' : 'no'}`,
+    `  Price: ${formatNumber(action.price_sats)} sats`,
+    action.due_at ? `  Due: ${action.due_at}${action.overdue ? ' (overdue)' : ''}` : null,
+    `  Reason: ${action.reason}`,
+    '',
+    'Raw JSON:',
+    JSON.stringify(action, null, 2),
+  ].filter(Boolean).join('\n');
+}
+
+function formatContractActionList(actions: ContractNextAction[]): string {
+  return [
+    `Contract actions (${actions.length} total):`,
+    ...actions.map((action) => [
+      `  ${action.contract_id}: ${action.action} (${action.status})`,
+      `    Actor: ${action.actor}; role: ${action.role}; required: ${action.required ? 'yes' : 'no'}`,
+      action.due_at ? `    Due: ${action.due_at}${action.overdue ? ' (overdue)' : ''}` : null,
+      `    Reason: ${action.reason}`,
+    ].filter(Boolean).join('\n')),
+    '',
+    'Raw JSON:',
+    JSON.stringify(actions, null, 2),
+  ].join('\n');
+}
+
 function parseWalletPolicy(policyJson?: string): WalletPolicy | null {
   if (!policyJson) return null;
   return JSON.parse(policyJson) as WalletPolicy;
@@ -314,7 +362,7 @@ export async function createServer(config: L402McpConfig): Promise<McpServer> {
 
   const server = new McpServer({
     name: 'satonomous-mcp',
-    version: '0.2.6',
+    version: '0.2.8',
   });
 
   // ── l402_register ───────────────────────────────────────────────────────────
@@ -935,6 +983,94 @@ export async function createServer(config: L402McpConfig): Promise<McpServer> {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return { content: [{ type: 'text', text: `❌ Error: ${msg}` }], isError: true };
+      }
+    }
+  );
+
+  // ── l402_next_contract_action ──────────────────────────────────────────────
+  server.tool(
+    'l402_next_contract_action',
+    'Return the next buyer/seller action required for one contract.',
+    {
+      contractId: z.string().describe('Contract ID'),
+      role: contractRoleSchema.optional().describe('Perspective for required=true. Omit to infer from current tenant.'),
+      now: z.string().optional().describe('ISO timestamp for overdue calculation. Defaults to current time.'),
+    },
+    async ({ contractId, role, now }) => {
+      try {
+        const action = await getAgent().getContractNextAction(contractId, {
+          role: role as ContractRole | undefined,
+          now,
+        });
+        return { content: [{ type: 'text', text: formatContractAction(action) }] };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text', text: `Error: ${msg}` }], isError: true };
+      }
+    }
+  );
+
+  // ── l402_list_contract_actions ─────────────────────────────────────────────
+  server.tool(
+    'l402_list_contract_actions',
+    'List contracts annotated with next required actions, optionally filtered by role/status.',
+    {
+      contract_role_filter: z.enum(['buyer', 'seller']).optional().describe('Gateway contract role filter'),
+      status: z.string().optional().describe('Gateway contract status filter'),
+      role: contractRoleSchema.optional().describe('Perspective for required=true. Omit to infer per contract.'),
+      action: contractActionSchema.optional().describe('Only return this next-action code'),
+      required_only: z.boolean().optional().default(false).describe('Only return actions required for the selected/inferred role'),
+      now: z.string().optional().describe('ISO timestamp for overdue calculation. Defaults to current time.'),
+    },
+    async ({ contract_role_filter, status, role, action, required_only, now }) => {
+      try {
+        const actions = await getAgent().listContractActions(
+          { role: contract_role_filter, status },
+          { role: role as ContractRole | undefined, now }
+        );
+        const filtered = actions.filter((item) => {
+          if (action && item.action !== action) return false;
+          if (required_only && !item.required) return false;
+          return true;
+        });
+        if (filtered.length === 0) {
+          return { content: [{ type: 'text', text: 'No matching contract actions found.' }] };
+        }
+        return { content: [{ type: 'text', text: formatContractActionList(filtered) }] };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text', text: `Error: ${msg}` }], isError: true };
+      }
+    }
+  );
+
+  // ── l402_wait_for_contract_action ──────────────────────────────────────────
+  server.tool(
+    'l402_wait_for_contract_action',
+    'Poll a contract until it reaches a target next action or status.',
+    {
+      contractId: z.string().describe('Contract ID'),
+      action: contractActionSchema.optional().describe('Target next-action code'),
+      status: z.string().optional().describe('Target gateway status'),
+      role: contractRoleSchema.optional().describe('Perspective for action classification'),
+      timeout_ms: z.number().int().positive().max(600_000).optional().default(60_000).describe('Maximum wait time'),
+      poll_interval_ms: z.number().int().positive().max(60_000).optional().default(5_000).describe('Polling interval'),
+      now: z.string().optional().describe('ISO timestamp for overdue calculation. Defaults to current time.'),
+    },
+    async ({ contractId, action, status, role, timeout_ms, poll_interval_ms, now }) => {
+      try {
+        const next = await getAgent().waitForContractAction(contractId, {
+          action: action as ContractNextActionCode | undefined,
+          status,
+          role: role as ContractRole | undefined,
+          timeoutMs: timeout_ms,
+          pollIntervalMs: poll_interval_ms,
+          now,
+        });
+        return { content: [{ type: 'text', text: formatContractAction(next) }] };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text', text: `Error: ${msg}` }], isError: true };
       }
     }
   );
