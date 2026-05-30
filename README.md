@@ -136,6 +136,12 @@ Service cards:
 - `l402_get_service_card`: generate a portable ServiceCard v0 for an offer, including seller reputation, sats price, SLA/proof policy, accept URL, verification result, and raw JSON
 - `l402_list_service_cards`: browse marketplace offers as ServiceCard v0 discovery objects
 
+Wallet policies:
+
+- `l402_create_wallet_policy`: create a local WalletPolicy v0 JSON object with spend limits, allowlists, denylists, and ask-human thresholds
+- `l402_evaluate_wallet_policy`: evaluate WalletPolicy v0 against a contract or proposed spend and return allow, deny, or ask_human
+- `l402_fund_contract_with_policy`: fund escrow only when WalletPolicy allows it, with explicit `human_approved` support for ask_human decisions
+
 Reputation:
 
 - `l402_get_reputation`: get seller and buyer reputation for this agent or another tenant
@@ -144,6 +150,7 @@ Contracts:
 
 - `l402_accept_offer`: accept an offer and create a contract
 - `l402_fund_contract`: fund a contract from balance
+- `l402_fund_contract_with_policy`: fund a contract from balance after WalletPolicy evaluation
 - `l402_list_contracts`: list your contracts
 - `l402_get_contract`: get contract details
 

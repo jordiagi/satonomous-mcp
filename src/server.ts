@@ -1,8 +1,15 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { L402Agent, verifyContractReceipt, verifyServiceCard } from 'satonomous';
-import type { ContractReceipt, ServiceCard } from 'satonomous';
+import {
+  L402Agent,
+  createWalletPolicy,
+  evaluateWalletPolicy,
+  verifyContractReceipt,
+  verifyServiceCard,
+  verifyWalletPolicy,
+} from 'satonomous';
+import type { ContractReceipt, ServiceCard, WalletPolicy, WalletPolicyContext } from 'satonomous';
 import type { L402McpConfig } from './config.js';
 
 type ReputationLevel = 'new' | 'bronze' | 'silver' | 'gold' | 'platinum';
@@ -170,6 +177,75 @@ function formatServiceCardList(cards: ServiceCard[]): string {
     'Raw JSON:',
     JSON.stringify(cards, null, 2),
   ].join('\n');
+}
+
+function formatWalletPolicy(policy: WalletPolicy): string {
+  const verification = verifyWalletPolicy(policy);
+  return [
+    'WalletPolicy v0',
+    `  Policy ID: ${policy.policy_id}`,
+    `  Body Hash: ${policy.body_hash}`,
+    policy.limits.max_contract_price_sats !== undefined
+      ? `  Max price: ${formatNumber(policy.limits.max_contract_price_sats)} sats`
+      : null,
+    policy.limits.max_contract_total_sats !== undefined
+      ? `  Max total: ${formatNumber(policy.limits.max_contract_total_sats)} sats`
+      : null,
+    policy.limits.daily_spend_limit_sats !== undefined
+      ? `  Daily limit: ${formatNumber(policy.limits.daily_spend_limit_sats)} sats`
+      : null,
+    policy.approvals.ask_human_above_sats !== undefined
+      ? `  Ask human above: ${formatNumber(policy.approvals.ask_human_above_sats)} sats`
+      : null,
+    `  Verification: ${verification.valid ? 'valid' : verification.codes.join(', ')}`,
+    '',
+    'Raw JSON:',
+    JSON.stringify(policy, null, 2),
+  ].filter(Boolean).join('\n');
+}
+
+function parseWalletPolicy(policyJson?: string): WalletPolicy | null {
+  if (!policyJson) return null;
+  return JSON.parse(policyJson) as WalletPolicy;
+}
+
+function buildWalletPolicy(args: {
+  policy_json?: string;
+  max_contract_price_sats?: number;
+  max_contract_total_sats?: number;
+  daily_spend_limit_sats?: number;
+  max_spend_per_counterparty_sats?: number;
+  min_seller_reputation?: number;
+  ask_human_above_sats?: number;
+  ask_human_for_unrated_counterparty?: boolean;
+  allowed_service_types?: string[];
+  denied_service_types?: string[];
+  allowed_counterparties?: string[];
+  denied_counterparties?: string[];
+}): WalletPolicy {
+  const parsed = parseWalletPolicy(args.policy_json);
+  if (parsed) return parsed;
+  return createWalletPolicy({
+    limits: {
+      max_contract_price_sats: args.max_contract_price_sats,
+      max_contract_total_sats: args.max_contract_total_sats,
+      daily_spend_limit_sats: args.daily_spend_limit_sats,
+      max_spend_per_counterparty_sats: args.max_spend_per_counterparty_sats,
+      min_seller_reputation: args.min_seller_reputation,
+    },
+    approvals: {
+      ask_human_above_sats: args.ask_human_above_sats,
+      ask_human_for_unrated_counterparty: args.ask_human_for_unrated_counterparty,
+    },
+    allowlists: {
+      service_types: args.allowed_service_types,
+      counterparties: args.allowed_counterparties,
+    },
+    denylists: {
+      service_types: args.denied_service_types,
+      counterparties: args.denied_counterparties,
+    },
+  });
 }
 
 function buildQuery(params?: object): string {
@@ -554,6 +630,174 @@ export async function createServer(config: L402McpConfig): Promise<McpServer> {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return { content: [{ type: 'text', text: `❌ Error: ${msg}` }], isError: true };
+      }
+    }
+  );
+
+  // ── l402_create_wallet_policy ──────────────────────────────────────────────
+  server.tool(
+    'l402_create_wallet_policy',
+    'Create a local WalletPolicy v0 JSON object with spend limits, allowlists, denylists, and ask-human thresholds.',
+    {
+      max_contract_price_sats: z.number().int().nonnegative().optional().describe('Maximum contract price in sats'),
+      max_contract_total_sats: z.number().int().nonnegative().optional().describe('Maximum price + fee in sats'),
+      daily_spend_limit_sats: z.number().int().nonnegative().optional().describe('Maximum spend per day in sats'),
+      max_spend_per_counterparty_sats: z.number().int().nonnegative().optional().describe('Maximum spend per counterparty in sats'),
+      min_seller_reputation: z.number().min(0).max(100).optional().describe('Minimum seller reputation score'),
+      ask_human_above_sats: z.number().int().nonnegative().optional().describe('Ask a human above this spend amount'),
+      ask_human_for_unrated_counterparty: z.boolean().optional().default(true).describe('Ask a human when seller reputation is unavailable'),
+      allowed_service_types: z.array(z.string()).optional().describe('Only allow these service types'),
+      denied_service_types: z.array(z.string()).optional().describe('Block these service types'),
+      allowed_counterparties: z.array(z.string()).optional().describe('Only allow these seller tenant IDs'),
+      denied_counterparties: z.array(z.string()).optional().describe('Block these seller tenant IDs'),
+    },
+    async (args) => {
+      try {
+        const policy = buildWalletPolicy(args);
+        return { content: [{ type: 'text', text: formatWalletPolicy(policy) }] };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text', text: `Error: ${msg}` }], isError: true };
+      }
+    }
+  );
+
+  // ── l402_evaluate_wallet_policy ────────────────────────────────────────────
+  server.tool(
+    'l402_evaluate_wallet_policy',
+    'Evaluate WalletPolicy v0 against either a contract ID or a proposed spend. Returns allow, deny, or ask_human.',
+    {
+      policy_json: z.string().optional().describe('Existing WalletPolicy JSON. If omitted, limit fields create one inline.'),
+      contractId: z.string().optional().describe('Contract ID to evaluate'),
+      amount_sats: z.number().int().positive().optional().describe('Spend amount in sats when contractId is omitted'),
+      price_sats: z.number().int().positive().optional().describe('Contract price in sats when contractId is omitted'),
+      fee_sats: z.number().int().nonnegative().optional().describe('Contract fee in sats when contractId is omitted'),
+      counterparty_tenant_id: z.string().optional().describe('Seller/counterparty tenant ID when contractId is omitted'),
+      service_type: z.string().optional().describe('Service type when contractId is omitted'),
+      daily_spent_sats: z.number().int().nonnegative().optional().describe('Already spent today in sats'),
+      counterparty_spent_sats: z.number().int().nonnegative().optional().describe('Already spent with this counterparty in sats'),
+      seller_reputation_score: z.number().min(0).max(100).optional().describe('Seller reputation score'),
+      max_contract_price_sats: z.number().int().nonnegative().optional(),
+      max_contract_total_sats: z.number().int().nonnegative().optional(),
+      daily_spend_limit_sats: z.number().int().nonnegative().optional(),
+      max_spend_per_counterparty_sats: z.number().int().nonnegative().optional(),
+      min_seller_reputation: z.number().min(0).max(100).optional(),
+      ask_human_above_sats: z.number().int().nonnegative().optional(),
+      ask_human_for_unrated_counterparty: z.boolean().optional().default(true),
+      allowed_service_types: z.array(z.string()).optional(),
+      denied_service_types: z.array(z.string()).optional(),
+      allowed_counterparties: z.array(z.string()).optional(),
+      denied_counterparties: z.array(z.string()).optional(),
+    },
+    async (args) => {
+      try {
+        const policy = buildWalletPolicy(args);
+        let request = {
+          amount_sats: args.amount_sats ?? ((args.price_sats ?? 0) + (args.fee_sats ?? 0)),
+          price_sats: args.price_sats,
+          fee_sats: args.fee_sats,
+          counterparty_tenant_id: args.counterparty_tenant_id,
+          service_type: args.service_type,
+        };
+        let context: WalletPolicyContext = {
+          daily_spent_sats: args.daily_spent_sats,
+          counterparty_spent_sats: args.counterparty_spent_sats,
+          seller_reputation_score: args.seller_reputation_score,
+        };
+
+        if (args.contractId) {
+          const contract = await getAgent().getContract(args.contractId);
+          const terms = contract.terms_snapshot && typeof contract.terms_snapshot === 'object'
+            ? contract.terms_snapshot
+            : {};
+          request = {
+            amount_sats: contract.price_sats + contract.fee_sats,
+            price_sats: contract.price_sats,
+            fee_sats: contract.fee_sats,
+            counterparty_tenant_id: contract.seller_tenant_id,
+            service_type: typeof terms.service_type === 'string' ? terms.service_type : undefined,
+          };
+          if (context.seller_reputation_score === undefined) {
+            try {
+              context = {
+                ...context,
+                seller_reputation_score: (await getAgent().getReputation(contract.seller_tenant_id)).seller.score,
+              };
+            } catch {
+              // Unavailable reputation is meaningful to WalletPolicy.
+            }
+          }
+        }
+
+        if (!request.amount_sats || request.amount_sats <= 0) {
+          throw new Error('amount_sats is required when contractId is omitted');
+        }
+
+        const decision = evaluateWalletPolicy(policy, request, context);
+        const text = [
+          `WalletPolicy decision: ${decision.decision}`,
+          `  Policy: ${decision.policy_id}`,
+          `  Amount: ${formatNumber(decision.amount_sats)} sats`,
+          `  Codes: ${decision.codes.join(', ')}`,
+          decision.reasons.length ? `  Reasons: ${decision.reasons.join('; ')}` : null,
+          '',
+          'Raw JSON:',
+          JSON.stringify({ policy, request, context, decision }, null, 2),
+        ].filter(Boolean).join('\n');
+        return { content: [{ type: 'text', text }] };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text', text: `Error: ${msg}` }], isError: true };
+      }
+    }
+  );
+
+  // ── l402_fund_contract_with_policy ─────────────────────────────────────────
+  server.tool(
+    'l402_fund_contract_with_policy',
+    'Fund a contract only if WalletPolicy v0 allows it. If decision is ask_human, pass human_approved=true after approval.',
+    {
+      contractId: z.string().describe('Contract ID to fund'),
+      human_approved: z.boolean().optional().default(false).describe('Set true only after a human approved an ask_human decision'),
+      policy_json: z.string().optional().describe('Existing WalletPolicy JSON. If omitted, limit fields create one inline.'),
+      daily_spent_sats: z.number().int().nonnegative().optional(),
+      counterparty_spent_sats: z.number().int().nonnegative().optional(),
+      seller_reputation_score: z.number().min(0).max(100).optional(),
+      max_contract_price_sats: z.number().int().nonnegative().optional(),
+      max_contract_total_sats: z.number().int().nonnegative().optional(),
+      daily_spend_limit_sats: z.number().int().nonnegative().optional(),
+      max_spend_per_counterparty_sats: z.number().int().nonnegative().optional(),
+      min_seller_reputation: z.number().min(0).max(100).optional(),
+      ask_human_above_sats: z.number().int().nonnegative().optional(),
+      ask_human_for_unrated_counterparty: z.boolean().optional().default(true),
+      allowed_service_types: z.array(z.string()).optional(),
+      denied_service_types: z.array(z.string()).optional(),
+      allowed_counterparties: z.array(z.string()).optional(),
+      denied_counterparties: z.array(z.string()).optional(),
+    },
+    async (args) => {
+      try {
+        const policy = buildWalletPolicy(args);
+        const result = await getAgent().fundContract(args.contractId, {
+          policy,
+          humanApproved: args.human_approved,
+          context: {
+            daily_spent_sats: args.daily_spent_sats,
+            counterparty_spent_sats: args.counterparty_spent_sats,
+            seller_reputation_score: args.seller_reputation_score,
+          },
+        });
+        const text = [
+          'Contract funded under WalletPolicy',
+          `  Contract ID: ${result.contract.id}`,
+          `  Status: ${result.contract.status}`,
+          `  Price: ${formatNumber(result.contract.price_sats)} sats`,
+          `  Message: ${result.message}`,
+        ].join('\n');
+        return { content: [{ type: 'text', text }] };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text', text: `Error: ${msg}` }], isError: true };
       }
     }
   );
