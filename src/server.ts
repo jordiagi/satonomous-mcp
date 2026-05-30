@@ -3,15 +3,20 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import {
   L402Agent,
+  applyMeteredUsage,
+  closeMeteredEscrowContract,
+  createMeteredEscrowContract,
   createTokenServiceCard,
   createWalletPolicy,
   evaluateWalletPolicy,
+  quoteMeteredUsage,
   verifyContractReceipt,
+  verifyMeteredEscrowContract,
   verifyServiceCard,
   verifyTokenServiceCard,
   verifyWalletPolicy,
 } from 'satonomous';
-import type { ContractReceipt, ServiceCard, TokenServiceCard, WalletPolicy, WalletPolicyContext } from 'satonomous';
+import type { ContractReceipt, MeteredEscrowContract, ServiceCard, TokenServiceCard, WalletPolicy, WalletPolicyContext } from 'satonomous';
 import type { ContractNextAction, ContractNextActionCode, ContractRole } from 'satonomous';
 import type { L402McpConfig } from './config.js';
 
@@ -42,6 +47,7 @@ const tokenPricingUnitSchema = z.enum(['per_1k_tokens', 'per_1m_tokens']);
 const tokenMeteringMethodSchema = z.enum(['seller_signed_usage', 'gateway_verified', 'buyer_acknowledged']);
 const tokenCounterSchema = z.enum(['provider', 'gateway', 'tiktoken', 'custom']);
 const tokenRetentionSchema = z.enum(['none', 'hash_only', 'redacted', 'full', 'custom']);
+const meteredEscrowStatusSchema = z.enum(['accepted', 'funded', 'active', 'completed', 'refunded', 'disputed', 'expired']);
 
 interface OfferSellerReputation {
   score: number;
@@ -245,6 +251,29 @@ function formatTokenServiceCard(card: TokenServiceCard): string {
   ].filter(Boolean).join('\n');
 }
 
+function formatMeteredEscrowContract(contract: MeteredEscrowContract): string {
+  const verification = verifyMeteredEscrowContract(contract);
+  return [
+    'MeteredEscrowContract v0',
+    `  Contract ID: ${contract.contract_id}`,
+    `  Terms Hash: ${contract.terms_hash}`,
+    `  Body Hash: ${contract.body_hash}`,
+    `  TokenServiceCard: ${contract.token_service_card_id}`,
+    `  Buyer: ${contract.buyer_agent_id}`,
+    `  Seller: ${contract.seller_agent_id}`,
+    `  Status: ${contract.status}`,
+    `  Escrowed: ${formatNumber(contract.escrow.escrowed_sats)} sats`,
+    `  Spent: ${formatNumber(contract.escrow.spent_sats)} sats`,
+    `  Refundable: ${formatNumber(contract.escrow.refundable_sats)} sats`,
+    `  Usage events: ${formatNumber(contract.usage_events.length)}`,
+    `  Price: ${contract.pricing.input_sats} sats input / ${contract.pricing.output_sats} sats output (${contract.pricing.unit})`,
+    `  Verification: ${verification.valid ? 'valid' : verification.codes.join(', ')}`,
+    '',
+    'Raw JSON:',
+    JSON.stringify(contract, null, 2),
+  ].join('\n');
+}
+
 function formatWalletPolicy(policy: WalletPolicy): string {
   const verification = verifyWalletPolicy(policy);
   return [
@@ -414,7 +443,7 @@ export async function createServer(config: L402McpConfig): Promise<McpServer> {
 
   const server = new McpServer({
     name: 'satonomous-mcp',
-    version: '0.2.8',
+    version: '0.2.10',
   });
 
   // ── l402_register ───────────────────────────────────────────────────────────
@@ -890,6 +919,189 @@ export async function createServer(config: L402McpConfig): Promise<McpServer> {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return { content: [{ type: 'text', text: `❌ Error: ${msg}` }], isError: true };
+      }
+    }
+  );
+
+  // ── l402_create_metered_escrow_contract ───────────────────────────────────
+  server.tool(
+    'l402_create_metered_escrow_contract',
+    'Create a local MeteredEscrowContract v0 from a TokenServiceCard JSON and prepaid sats budget.',
+    {
+      card_json: z.string().describe('TokenServiceCard JSON string'),
+      buyer_agent_id: z.string().describe('Buyer agent or tenant ID'),
+      escrowed_sats: z.number().int().positive().describe('Prepaid escrow budget in sats'),
+      issued_at: z.string().optional().describe('ISO timestamp for deterministic creation'),
+      expires_at: z.string().nullable().optional().describe('ISO expiry. Defaults from TokenServiceCard expires_after_minutes/service expiry.'),
+      status: z.enum(['accepted', 'funded', 'active']).optional().default('funded').describe('Initial local contract status'),
+    },
+    async ({ card_json, buyer_agent_id, escrowed_sats, issued_at, expires_at, status }) => {
+      try {
+        const card = JSON.parse(card_json) as TokenServiceCard;
+        const contract = createMeteredEscrowContract({
+          tokenServiceCard: card,
+          buyerAgentId: buyer_agent_id,
+          escrowedSats: escrowed_sats,
+          issuedAt: issued_at,
+          expiresAt: expires_at,
+          status,
+        });
+        return { content: [{ type: 'text', text: formatMeteredEscrowContract(contract) }] };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text', text: `Error: ${msg}` }], isError: true };
+      }
+    }
+  );
+
+  // ── l402_quote_metered_usage ──────────────────────────────────────────────
+  server.tool(
+    'l402_quote_metered_usage',
+    'Quote one token usage event against a MeteredEscrowContract before charging escrow.',
+    {
+      contract_json: z.string().describe('MeteredEscrowContract JSON string'),
+      request_id: z.string().describe('Idempotency key for the request'),
+      model_id: z.string().describe('Model ID used for this request'),
+      input_tokens: z.number().int().nonnegative().describe('Input token count'),
+      output_tokens: z.number().int().nonnegative().describe('Output token count'),
+      cached_input_tokens: z.number().int().nonnegative().optional().describe('Cached input token count'),
+    },
+    async ({ contract_json, request_id, model_id, input_tokens, output_tokens, cached_input_tokens }) => {
+      try {
+        const contract = JSON.parse(contract_json) as MeteredEscrowContract;
+        const quote = quoteMeteredUsage(contract, {
+          requestId: request_id,
+          modelId: model_id,
+          inputTokens: input_tokens,
+          outputTokens: output_tokens,
+          cachedInputTokens: cached_input_tokens,
+        });
+        const text = [
+          'Metered usage quote',
+          `  Contract ID: ${contract.contract_id}`,
+          `  Request ID: ${request_id}`,
+          `  Input charge: ${formatNumber(quote.input_sats)} sats`,
+          `  Output charge: ${formatNumber(quote.output_sats)} sats`,
+          `  Cached input charge: ${formatNumber(quote.cached_input_sats)} sats`,
+          `  Minimum applied: ${formatNumber(quote.minimum_applied_sats)} sats`,
+          `  Total: ${formatNumber(quote.total_sats)} sats`,
+          `  Remaining after: ${formatNumber(quote.remaining_after_sats)} sats`,
+          '',
+          'Raw JSON:',
+          JSON.stringify({ quote, contract }, null, 2),
+        ].join('\n');
+        return { content: [{ type: 'text', text }] };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text', text: `Error: ${msg}` }], isError: true };
+      }
+    }
+  );
+
+  // ── l402_apply_metered_usage ──────────────────────────────────────────────
+  server.tool(
+    'l402_apply_metered_usage',
+    'Apply one token usage event to a MeteredEscrowContract. Rejects duplicates, over-limit usage, and over-budget charges.',
+    {
+      contract_json: z.string().describe('MeteredEscrowContract JSON string'),
+      request_id: z.string().describe('Idempotency key for the request'),
+      model_id: z.string().describe('Model ID used for this request'),
+      input_tokens: z.number().int().nonnegative().describe('Input token count'),
+      output_tokens: z.number().int().nonnegative().describe('Output token count'),
+      cached_input_tokens: z.number().int().nonnegative().optional().describe('Cached input token count'),
+      created_at: z.string().optional().describe('ISO timestamp for deterministic usage event'),
+      prompt_hash: z.string().optional().describe('Hash of redacted prompt metadata'),
+      completion_hash: z.string().optional().describe('Hash of redacted completion metadata'),
+      metadata_hash: z.string().optional().describe('Hash of redacted request/response metadata'),
+      seller_signature: z.string().optional().describe('Seller signature over usage event, if available'),
+      buyer_acknowledged: z.boolean().optional().describe('Whether buyer acknowledged this usage event'),
+    },
+    async (args) => {
+      try {
+        const contract = JSON.parse(args.contract_json) as MeteredEscrowContract;
+        const result = applyMeteredUsage(contract, {
+          requestId: args.request_id,
+          modelId: args.model_id,
+          inputTokens: args.input_tokens,
+          outputTokens: args.output_tokens,
+          cachedInputTokens: args.cached_input_tokens,
+          createdAt: args.created_at,
+          promptHash: args.prompt_hash,
+          completionHash: args.completion_hash,
+          metadataHash: args.metadata_hash,
+          sellerSignature: args.seller_signature,
+          buyerAcknowledged: args.buyer_acknowledged,
+        });
+        const text = [
+          `Metered usage: ${result.applied ? 'applied' : 'rejected'}`,
+          `  Codes: ${result.codes.join(', ')}`,
+          result.reasons.length ? `  Reasons: ${result.reasons.join('; ')}` : null,
+          result.quote ? `  Charge: ${formatNumber(result.quote.total_sats)} sats` : null,
+          result.event ? `  Usage event: ${result.event.event_id}` : null,
+          `  Contract status: ${result.contract.status}`,
+          `  Spent: ${formatNumber(result.contract.escrow.spent_sats)} sats`,
+          `  Refundable: ${formatNumber(result.contract.escrow.refundable_sats)} sats`,
+          '',
+          'Raw JSON:',
+          JSON.stringify(result, null, 2),
+        ].filter(Boolean).join('\n');
+        return { content: [{ type: 'text', text }], isError: !result.applied };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text', text: `Error: ${msg}` }], isError: true };
+      }
+    }
+  );
+
+  // ── l402_close_metered_escrow_contract ────────────────────────────────────
+  server.tool(
+    'l402_close_metered_escrow_contract',
+    'Close a local MeteredEscrowContract and compute settled/refundable sats.',
+    {
+      contract_json: z.string().describe('MeteredEscrowContract JSON string'),
+      status: meteredEscrowStatusSchema.optional().default('completed').describe('Closing status'),
+      closed_at: z.string().optional().describe('ISO close timestamp'),
+    },
+    async ({ contract_json, status, closed_at }) => {
+      try {
+        if (!['completed', 'refunded', 'disputed', 'expired'].includes(status)) {
+          throw new Error('status must be completed, refunded, disputed, or expired');
+        }
+        const contract = JSON.parse(contract_json) as MeteredEscrowContract;
+        const closed = closeMeteredEscrowContract(contract, status as 'completed' | 'refunded' | 'disputed' | 'expired', closed_at);
+        return { content: [{ type: 'text', text: formatMeteredEscrowContract(closed) }] };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text', text: `Error: ${msg}` }], isError: true };
+      }
+    }
+  );
+
+  // ── l402_verify_metered_escrow_contract ───────────────────────────────────
+  server.tool(
+    'l402_verify_metered_escrow_contract',
+    'Verify MeteredEscrowContract v0 JSON for hashes, spend totals, duplicate request IDs, escrow cap, and refund math.',
+    {
+      contract_json: z.string().describe('MeteredEscrowContract JSON string'),
+    },
+    async ({ contract_json }) => {
+      try {
+        const contract = JSON.parse(contract_json) as MeteredEscrowContract;
+        const verification = verifyMeteredEscrowContract(contract);
+        const text = [
+          `MeteredEscrowContract verification: ${verification.valid ? 'valid' : 'invalid'}`,
+          `  Codes: ${verification.codes.join(', ')}`,
+          verification.expected_contract_id ? `  Expected contract ID: ${verification.expected_contract_id}` : null,
+          verification.expected_terms_hash ? `  Expected terms hash: ${verification.expected_terms_hash}` : null,
+          verification.expected_body_hash ? `  Expected body hash: ${verification.expected_body_hash}` : null,
+          '',
+          'Raw JSON:',
+          JSON.stringify({ verification, contract }, null, 2),
+        ].filter(Boolean).join('\n');
+        return { content: [{ type: 'text', text }] };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text', text: `Error: ${msg}` }], isError: true };
       }
     }
   );

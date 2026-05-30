@@ -137,6 +137,11 @@ Service cards:
 - `l402_list_service_cards`: browse marketplace offers as ServiceCard v0 discovery objects
 - `l402_create_token_service_card`: create a local TokenServiceCard v0 for prepaid metered inference offers with model, sats/token pricing, budget cap, metering, privacy, settlement, and seller authorization terms
 - `l402_verify_token_service_card`: verify TokenServiceCard v0 JSON for deterministic ID/hash, model inventory, pricing, budget cap, metering, accept URL, and seller authorization attestation
+- `l402_create_metered_escrow_contract`: create a local prepaid MeteredEscrowContract v0 from a TokenServiceCard
+- `l402_quote_metered_usage`: quote one token usage event before charging escrow
+- `l402_apply_metered_usage`: apply one usage event, rejecting duplicate request IDs, limit violations, and over-budget charges
+- `l402_close_metered_escrow_contract`: close a metered escrow contract and compute settled/refundable sats
+- `l402_verify_metered_escrow_contract`: verify hashes, usage totals, duplicate request IDs, escrow caps, and refund math
 
 Wallet policies:
 
