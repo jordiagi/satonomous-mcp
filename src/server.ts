@@ -3,13 +3,15 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import {
   L402Agent,
+  createTokenServiceCard,
   createWalletPolicy,
   evaluateWalletPolicy,
   verifyContractReceipt,
   verifyServiceCard,
+  verifyTokenServiceCard,
   verifyWalletPolicy,
 } from 'satonomous';
-import type { ContractReceipt, ServiceCard, WalletPolicy, WalletPolicyContext } from 'satonomous';
+import type { ContractReceipt, ServiceCard, TokenServiceCard, WalletPolicy, WalletPolicyContext } from 'satonomous';
 import type { ContractNextAction, ContractNextActionCode, ContractRole } from 'satonomous';
 import type { L402McpConfig } from './config.js';
 
@@ -27,6 +29,19 @@ const contractActionSchema = z.enum([
   'terminal_receipt_available',
   'unknown_status',
 ]);
+const tokenProviderTypeSchema = z.enum(['local', 'hosted', 'byok', 'brokered', 'aggregator', 'unknown']);
+const tokenProviderDisclosureSchema = z.enum(['exact', 'class', 'undisclosed']);
+const tokenAuthorizationBasisSchema = z.enum([
+  'own_infrastructure',
+  'authorized_resale',
+  'aggregator_terms',
+  'unknown',
+  'prohibited_risk',
+]);
+const tokenPricingUnitSchema = z.enum(['per_1k_tokens', 'per_1m_tokens']);
+const tokenMeteringMethodSchema = z.enum(['seller_signed_usage', 'gateway_verified', 'buyer_acknowledged']);
+const tokenCounterSchema = z.enum(['provider', 'gateway', 'tiktoken', 'custom']);
+const tokenRetentionSchema = z.enum(['none', 'hash_only', 'redacted', 'full', 'custom']);
 
 interface OfferSellerReputation {
   score: number;
@@ -191,6 +206,43 @@ function formatServiceCardList(cards: ServiceCard[]): string {
     'Raw JSON:',
     JSON.stringify(cards, null, 2),
   ].join('\n');
+}
+
+function formatTokenServiceCard(card: TokenServiceCard): string {
+  const verification = verifyTokenServiceCard(card);
+  const modelIds = card.inference.models.map((model) => model.id).join(', ');
+  const provider = card.inference.provider.name
+    ? `${card.inference.provider.name} (${card.inference.provider.type})`
+    : card.inference.provider.type;
+  const reputation = card.seller.reputation
+    ? `${card.seller.reputation.score}/100 ${card.seller.reputation.level}, ` +
+      `${formatNumber(card.seller.reputation.settled_contracts)} settled`
+    : 'unavailable';
+
+  return [
+    'TokenServiceCard v0',
+    `  Card ID: ${card.card_id}`,
+    `  Body Hash: ${card.body_hash}`,
+    `  Seller: ${card.seller.agent_id}`,
+    `  Service: ${card.service.title}`,
+    `  Models: ${modelIds || 'none'}`,
+    `  API: ${card.inference.api}`,
+    card.inference.endpoint ? `  Endpoint: ${card.inference.endpoint}` : null,
+    `  Provider: ${provider}`,
+    `  Authorization: ${card.inference.provider.authorization_basis}`,
+    `  Price: ${card.pricing.input_sats} sats input / ${card.pricing.output_sats} sats output (${card.pricing.unit})`,
+    `  Max budget: ${formatNumber(card.pricing.max_contract_sats)} sats`,
+    `  Metering: ${card.metering.method}; counter=${card.metering.token_counter}; dry-run=${card.metering.dry_run_quote ? 'yes' : 'no'}`,
+    `  Settlement: ${card.settlement.escrow_policy}; unused refund=${card.settlement.refund_unused_sats ? 'yes' : 'no'}`,
+    `  Privacy: ${card.privacy.retention}; public receipts=${card.privacy.public_receipts}`,
+    `  Reputation: ${reputation}`,
+    `  Accept: ${card.accept.accept_url}`,
+    `  Verification: ${verification.valid ? 'valid' : verification.codes.join(', ')}`,
+    verification.warnings.length ? `  Warnings: ${verification.warnings.join(', ')}` : null,
+    '',
+    'Raw JSON:',
+    JSON.stringify(card, null, 2),
+  ].filter(Boolean).join('\n');
 }
 
 function formatWalletPolicy(policy: WalletPolicy): string {
@@ -675,6 +727,166 @@ export async function createServer(config: L402McpConfig): Promise<McpServer> {
           return { content: [{ type: 'text', text: 'No marketplace service cards found.' }] };
         }
         return { content: [{ type: 'text', text: formatServiceCardList(cards) }] };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text', text: `❌ Error: ${msg}` }], isError: true };
+      }
+    }
+  );
+
+  // ── l402_create_token_service_card ─────────────────────────────────────────
+  server.tool(
+    'l402_create_token_service_card',
+    'Create a local TokenServiceCard v0 for a prepaid metered inference offer. Returns compact text plus raw JSON.',
+    {
+      seller_agent_id: z.string().describe('Seller agent or tenant ID'),
+      title: z.string().describe('Offer title'),
+      description: z.string().optional().describe('Offer description'),
+      endpoint: z.string().url().optional().describe('OpenAI-compatible base URL, if public'),
+      model_id: z.string().describe('Model ID exposed by the seller'),
+      model_display_name: z.string().optional().describe('Human-readable model name'),
+      input_sats: z.number().nonnegative().describe('Input token price in sats for the selected unit'),
+      output_sats: z.number().nonnegative().describe('Output token price in sats for the selected unit'),
+      pricing_unit: tokenPricingUnitSchema.optional().default('per_1k_tokens').describe('Pricing unit'),
+      max_contract_sats: z.number().int().positive().describe('Maximum prepaid escrow budget for one contract'),
+      max_context_tokens: z.number().int().positive().describe('Maximum context tokens'),
+      max_output_tokens: z.number().int().positive().describe('Maximum output tokens'),
+      lightning_address: z.string().optional().describe('Seller payout Lightning address'),
+      provider_type: tokenProviderTypeSchema.optional().default('hosted').describe('Provider/source type'),
+      provider_name: z.string().optional().describe('Provider/source name or class'),
+      provider_disclosure: tokenProviderDisclosureSchema.optional().default('class').describe('Provider disclosure level'),
+      authorization_basis: tokenAuthorizationBasisSchema.optional().default('authorized_resale').describe('Seller authorization basis'),
+      attestation: z.string().optional().describe('Seller attestation that it is authorized to provide the inference service'),
+      seller_attests_authorized: z.boolean().optional().default(true).describe('Whether seller attests authorization'),
+      accept_url: z.string().optional().describe('URL or URI a buyer agent can use to accept the offer'),
+      contract_template_ref: z.string().optional().describe('Stable contract template reference'),
+      dispute_window_minutes: z.number().int().positive().optional().default(120).describe('Dispute window in minutes'),
+      metering_method: tokenMeteringMethodSchema.optional().default('gateway_verified').describe('Usage metering method'),
+      token_counter: tokenCounterSchema.optional().default('gateway').describe('Token counter source'),
+      dry_run_quote: z.boolean().optional().default(true).describe('Whether seller supports dry-run usage quotes'),
+      retention: tokenRetentionSchema.optional().default('hash_only').describe('Seller retention mode'),
+      log_prompts: z.boolean().optional().default(false).describe('Whether seller logs raw prompts'),
+      log_completions: z.boolean().optional().default(false).describe('Whether seller logs raw completions'),
+      training_use: z.boolean().optional().default(false).describe('Whether seller uses data for training'),
+      public_receipts: z.enum(['hash_only', 'redacted', 'private']).optional().default('hash_only').describe('Public receipt privacy level'),
+      trust_tier: z.enum(['anonymous', 'verified', 'business', 'infrastructure']).optional().default('anonymous').describe('Seller trust tier'),
+      policy_flags: z.array(z.string()).optional().describe('Risk/policy flags, for example raw_api_key_resale'),
+    },
+    async (args) => {
+      try {
+        const card = createTokenServiceCard({
+          seller: {
+            agent_id: args.seller_agent_id,
+            payout: args.lightning_address ? { lightning_address: args.lightning_address } : undefined,
+            reputation: null,
+            trust: {
+              tier: args.trust_tier,
+              policy_flags: args.policy_flags ?? [],
+            },
+          },
+          service: {
+            service_type: 'llm_inference',
+            title: args.title,
+            description: args.description ?? null,
+            active: true,
+            created_at: new Date().toISOString(),
+            expires_at: null,
+          },
+          inference: {
+            api: 'openai-compatible',
+            endpoint: args.endpoint,
+            models: [
+              {
+                id: args.model_id,
+                display_name: args.model_display_name,
+                max_context_tokens: args.max_context_tokens,
+                max_output_tokens: args.max_output_tokens,
+                modalities: ['text'],
+              },
+            ],
+            supports: {
+              chat_completions: true,
+              streaming: true,
+            },
+            provider: {
+              type: args.provider_type,
+              name: args.provider_name,
+              disclosure: args.provider_disclosure,
+              authorization_basis: args.authorization_basis,
+              seller_attests_authorized: args.seller_attests_authorized,
+              attestation:
+                args.attestation ??
+                'Seller attests it is authorized to provide this inference service and is not sharing raw provider credentials.',
+            },
+          },
+          pricing: {
+            currency: 'sats',
+            unit: args.pricing_unit,
+            input_sats: args.input_sats,
+            output_sats: args.output_sats,
+            max_contract_sats: args.max_contract_sats,
+          },
+          limits: {
+            max_context_tokens: args.max_context_tokens,
+            max_output_tokens: args.max_output_tokens,
+          },
+          metering: {
+            method: args.metering_method,
+            token_counter: args.token_counter,
+            dry_run_quote: args.dry_run_quote,
+          },
+          privacy: {
+            retention: args.retention,
+            log_prompts: args.log_prompts,
+            log_completions: args.log_completions,
+            training_use: args.training_use,
+            public_receipts: args.public_receipts,
+          },
+          settlement: {
+            dispute_window_minutes: args.dispute_window_minutes,
+            refund_unused_sats: true,
+            partial_settlement: true,
+          },
+          accept: {
+            accept_url:
+              args.accept_url ?? `satonomous://token-services/${encodeURIComponent(args.model_id)}/accept`,
+            contract_template_ref:
+              args.contract_template_ref ?? `satonomous:token-service:${args.model_id}`,
+          },
+          links: {
+            docs: 'https://github.com/jordiagi/satonomous/blob/main/TOKEN_SERVICE_CARDS.md',
+          },
+        });
+        return { content: [{ type: 'text', text: formatTokenServiceCard(card) }] };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text', text: `❌ Error: ${msg}` }], isError: true };
+      }
+    }
+  );
+
+  // ── l402_verify_token_service_card ─────────────────────────────────────────
+  server.tool(
+    'l402_verify_token_service_card',
+    'Verify a TokenServiceCard v0 JSON object and return validation codes, warnings, expected ID/hash, and raw JSON.',
+    {
+      card_json: z.string().describe('TokenServiceCard JSON string'),
+    },
+    async ({ card_json }) => {
+      try {
+        const card = JSON.parse(card_json) as TokenServiceCard;
+        const verification = verifyTokenServiceCard(card);
+        const text = [
+          `TokenServiceCard verification: ${verification.valid ? 'valid' : 'invalid'}`,
+          `  Codes: ${verification.codes.join(', ')}`,
+          verification.warnings.length ? `  Warnings: ${verification.warnings.join(', ')}` : null,
+          verification.expected_card_id ? `  Expected card ID: ${verification.expected_card_id}` : null,
+          verification.expected_body_hash ? `  Expected body hash: ${verification.expected_body_hash}` : null,
+          '',
+          'Raw JSON:',
+          JSON.stringify({ verification, card }, null, 2),
+        ].filter(Boolean).join('\n');
+        return { content: [{ type: 'text', text }] };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return { content: [{ type: 'text', text: `❌ Error: ${msg}` }], isError: true };

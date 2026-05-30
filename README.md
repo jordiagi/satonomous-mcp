@@ -135,6 +135,8 @@ Service cards:
 
 - `l402_get_service_card`: generate a portable ServiceCard v0 for an offer, including seller reputation, sats price, SLA/proof policy, accept URL, verification result, and raw JSON
 - `l402_list_service_cards`: browse marketplace offers as ServiceCard v0 discovery objects
+- `l402_create_token_service_card`: create a local TokenServiceCard v0 for prepaid metered inference offers with model, sats/token pricing, budget cap, metering, privacy, settlement, and seller authorization terms
+- `l402_verify_token_service_card`: verify TokenServiceCard v0 JSON for deterministic ID/hash, model inventory, pricing, budget cap, metering, accept URL, and seller authorization attestation
 
 Wallet policies:
 
