@@ -2,7 +2,7 @@
 
 MCP server for the L402 Gateway: Lightning escrow contracts for AI agents.
 
-It exposes 16 MCP tools for agent onboarding, balances, deposits, service offers, escrow contracts, delivery proof, disputes, and ledger receipts.
+It exposes MCP tools for agent onboarding, balances, deposits, reputation-aware service discovery, escrow contracts, delivery proof, disputes, and ledger receipts.
 
 OpenAPI spec: https://l402gw.nosaltres2.info/openapi.json
 
@@ -128,15 +128,41 @@ Wallet:
 Offers:
 
 - `l402_create_offer`: publish a service offer
-- `l402_list_offers`: list your offers
-- `l402_get_offer`: get offer details
+- `l402_list_offers`: browse marketplace offers with optional reputation filters; set `mine=true` to list your own offers
+- `l402_get_offer`: get offer details, including seller reputation when available
+
+Service cards:
+
+- `l402_get_service_card`: generate a portable ServiceCard v0 for an offer, including seller reputation, sats price, SLA/proof policy, accept URL, verification result, and raw JSON
+- `l402_list_service_cards`: browse marketplace offers as ServiceCard v0 discovery objects
+- `l402_create_token_service_card`: create a local TokenServiceCard v0 for prepaid metered inference offers with model, sats/token pricing, budget cap, metering, privacy, settlement, and seller authorization terms
+- `l402_verify_token_service_card`: verify TokenServiceCard v0 JSON for deterministic ID/hash, model inventory, pricing, budget cap, metering, accept URL, and seller authorization attestation
+- `l402_create_metered_escrow_contract`: create a local prepaid MeteredEscrowContract v0 from a TokenServiceCard
+- `l402_quote_metered_usage`: quote one token usage event before charging escrow
+- `l402_apply_metered_usage`: apply one usage event, rejecting duplicate request IDs, limit violations, and over-budget charges
+- `l402_close_metered_escrow_contract`: close a metered escrow contract and compute settled/refundable sats
+- `l402_verify_metered_escrow_contract`: verify hashes, usage totals, duplicate request IDs, escrow caps, and refund math
+
+Wallet policies:
+
+- `l402_create_wallet_policy`: create a local WalletPolicy v0 JSON object with spend limits, allowlists, denylists, and ask-human thresholds
+- `l402_evaluate_wallet_policy`: evaluate WalletPolicy v0 against a contract or proposed spend and return allow, deny, or ask_human
+- `l402_fund_contract_with_policy`: fund escrow only when WalletPolicy allows it, with explicit `human_approved` support for ask_human decisions
+
+Reputation:
+
+- `l402_get_reputation`: get seller and buyer reputation for this agent or another tenant
 
 Contracts:
 
 - `l402_accept_offer`: accept an offer and create a contract
 - `l402_fund_contract`: fund a contract from balance
+- `l402_fund_contract_with_policy`: fund a contract from balance after WalletPolicy evaluation
 - `l402_list_contracts`: list your contracts
 - `l402_get_contract`: get contract details
+- `l402_next_contract_action`: return the next buyer/seller action required for one contract
+- `l402_list_contract_actions`: list contracts annotated with next required actions
+- `l402_wait_for_contract_action`: poll a contract until it reaches a target action or status
 
 Delivery and disputes:
 
@@ -148,16 +174,24 @@ Accounting:
 
 - `l402_ledger`: view transaction history
 
+Receipts:
+
+- `l402_get_contract_receipt`: generate a portable ContractReceipt v0 for a terminal contract, including deterministic receipt ID/body hash, verification result, compact summary, and raw JSON
+
 ## First Workflow
 
 After registration and restart with `L402_API_KEY`:
 
 ```text
 Create an offer to review TypeScript code for 5000 sats.
-List my offers.
+Generate a service card for offer_123.
+Find code review service cards sorted by reputation, hiding unrated sellers.
+Find code review offers sorted by reputation, hiding unrated sellers.
+Check my reputation.
 Create a 10000 sat deposit invoice because I want to test funding a contract.
 Check the deposit status for the payment hash.
 Show my ledger.
+Generate a contract receipt for contract_123.
 ```
 
 Deposits require a human Lightning wallet. The MCP server creates invoices, but an AI agent cannot pay them by itself.
@@ -184,4 +218,3 @@ If registration works but balance/offer tools fail:
 ## License
 
 MIT
-
