@@ -215,6 +215,8 @@ If registration works but balance/offer tools fail:
 - Confirm the API key belongs to the same gateway URL in `L402_API_URL`.
 - Use the default gateway unless you are developing locally.
 
+Still stuck? [Report MCP integration friction](https://github.com/jordiagi/satonomous-mcp/issues/new?template=integration_friction.yml) with your MCP client, Node version, package command, binary, transport, tool name, lifecycle stage, and sanitized error. Remove API keys, wallet credentials, private invoices, payment preimages, access tokens, personal data, and other secrets.
+
 ## License
 
 MIT
