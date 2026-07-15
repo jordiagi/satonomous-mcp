@@ -1,6 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
+import packageJson from '../package.json';
 import {
   L402Agent,
   applyMeteredUsage,
@@ -443,7 +444,7 @@ export async function createServer(config: L402McpConfig): Promise<McpServer> {
 
   const server = new McpServer({
     name: 'satonomous-mcp',
-    version: '0.2.10',
+    version: packageJson.version,
   });
 
   // ── l402_register ───────────────────────────────────────────────────────────

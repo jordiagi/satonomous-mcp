@@ -70,7 +70,7 @@ body:
     id: tool
     attributes:
       label: Tool name, if applicable
-      placeholder: "l402_register, l402_get_balance, or not applicable"
+      placeholder: "l402_register, l402_balance, or not applicable"
     validations:
       required: false
   - type: textarea
