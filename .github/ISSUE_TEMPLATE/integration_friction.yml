@@ -1,0 +1,116 @@
+name: MCP integration friction / first-run failure
+description: Report friction while installing, configuring, starting, or calling satonomous-mcp.
+title: "[MCP friction]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for first-run MCP friction: package installation, client configuration, process startup, transport, tool calls, gateway responses, or wallet/contract/escrow workflow failures.
+
+        Before submitting, remove API keys, wallet credentials, private invoices, payment preimages, access tokens, personal data, and any other secrets.
+  - type: dropdown
+    id: lifecycle_stage
+    attributes:
+      label: Where did you get stuck?
+      options:
+        - Install or package resolution
+        - MCP client configuration
+        - Server startup
+        - Registration or API key setup
+        - Wallet or balance tool
+        - Offer or ServiceCard tool
+        - Contract or escrow tool
+        - Deposit invoice or deposit status
+        - Receipt or reputation tool
+        - Gateway request or response
+        - Other / not sure
+    validations:
+      required: true
+  - type: input
+    id: client
+    attributes:
+      label: MCP client or host
+      placeholder: "Claude Desktop, Cursor, VS Code, custom client, or other"
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: "macOS 26, Node 24.4.1"
+    validations:
+      required: true
+  - type: input
+    id: package_command
+    attributes:
+      label: Package version and command
+      placeholder: "satonomous-mcp@0.2.11 via npx -y satonomous-mcp"
+    validations:
+      required: true
+  - type: dropdown
+    id: binary
+    attributes:
+      label: Binary name
+      options:
+        - satonomous-mcp
+        - l402-mcp compatibility alias
+        - Custom / not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: transport
+    attributes:
+      label: Transport
+      options:
+        - stdio
+        - Custom / not sure
+    validations:
+      required: true
+  - type: input
+    id: tool
+    attributes:
+      label: Tool name, if applicable
+      placeholder: "l402_register, l402_get_balance, or not applicable"
+    validations:
+      required: false
+  - type: textarea
+    id: steps
+    attributes:
+      label: Minimal reproduction
+      description: Include the smallest sanitized config or command that reproduces the failure.
+      placeholder: |
+        1. Configure the MCP server with ...
+        2. Restart the client ...
+        3. Call tool ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+      placeholder: "I expected..."
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result and sanitized error
+      description: Include the exact error or response after removing secrets and private payment data.
+      placeholder: "Instead I saw..."
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs or screenshots
+      description: Remove API keys, wallet credentials, private invoices, payment preimages, access tokens, personal data, and any other secrets.
+      render: shell
+    validations:
+      required: false
+  - type: checkboxes
+    id: secret_check
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed API keys, wallet credentials, private invoices, payment preimages, access tokens, personal data, and other secrets.
+          required: true
