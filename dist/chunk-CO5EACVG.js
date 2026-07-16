@@ -2,6 +2,67 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+
+// package.json
+var package_default = {
+  name: "satonomous-mcp",
+  version: "0.2.11",
+  mcpName: "io.github.jordiagi/satonomous-mcp",
+  description: "MCP server for AI agents to trade services and earn sats autonomously via Lightning escrow contracts.",
+  keywords: [
+    "mcp",
+    "model-context-protocol",
+    "satonomous",
+    "l402",
+    "lightning",
+    "bitcoin",
+    "escrow",
+    "contracts",
+    "agent-payments",
+    "llm-tools"
+  ],
+  homepage: "https://github.com/jordiagi/satonomous-mcp#readme",
+  bugs: {
+    url: "https://github.com/jordiagi/satonomous-mcp/issues"
+  },
+  license: "MIT",
+  repository: {
+    type: "git",
+    url: "git+https://github.com/jordiagi/satonomous-mcp.git"
+  },
+  type: "module",
+  bin: {
+    "satonomous-mcp": "bin/satonomous-mcp.mjs",
+    "l402-mcp": "bin/l402-mcp.mjs"
+  },
+  main: "dist/index.js",
+  files: [
+    "dist",
+    "bin",
+    "README.md"
+  ],
+  scripts: {
+    build: "tsup",
+    test: "vitest run",
+    prepublishOnly: "npm run build"
+  },
+  dependencies: {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    satonomous: "^0.3.7",
+    zod: "^4.0.0"
+  },
+  devDependencies: {
+    "@types/node": "^25.5.0",
+    tsup: "^8.0.0",
+    typescript: "^5.0.0",
+    vitest: "^4.1.0"
+  },
+  engines: {
+    node: ">=18"
+  }
+};
+
+// src/server.ts
 import {
   L402Agent,
   applyMeteredUsage,
@@ -322,7 +383,7 @@ async function createServer(config) {
   }
   const server = new McpServer({
     name: "satonomous-mcp",
-    version: "0.2.10"
+    version: package_default.version
   });
   server.tool(
     "l402_register",
@@ -1505,4 +1566,4 @@ export {
   shouldShowHelp,
   run
 };
-//# sourceMappingURL=chunk-MHTPFWKE.js.map
+//# sourceMappingURL=chunk-CO5EACVG.js.map
