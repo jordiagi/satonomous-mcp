@@ -1,6 +1,6 @@
 {
   "name": "satonomous-mcp",
-  "version": "0.2.11",
+  "version": "0.2.12",
   "mcpName": "io.github.jordiagi/satonomous-mcp",
   "description": "MCP server for AI agents to trade services and earn sats autonomously via Lightning escrow contracts.",
   "keywords": [

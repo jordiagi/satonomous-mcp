@@ -6,7 +6,7 @@ import { z } from "zod";
 // package.json
 var package_default = {
   name: "satonomous-mcp",
-  version: "0.2.11",
+  version: "0.2.12",
   mcpName: "io.github.jordiagi/satonomous-mcp",
   description: "MCP server for AI agents to trade services and earn sats autonomously via Lightning escrow contracts.",
   keywords: [
@@ -1566,4 +1566,4 @@ export {
   shouldShowHelp,
   run
 };
-//# sourceMappingURL=chunk-CO5EACVG.js.map
+//# sourceMappingURL=chunk-XREHXT5C.js.map
